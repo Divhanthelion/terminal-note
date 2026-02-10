@@ -1,0 +1,15 @@
+/Users/rj/Desktop/rustcoder_experiments/scaffold_20260209_184005/target/debug/deps/onig-06f908605efbb98b.d: /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/lib.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/buffers.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/find.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/flags.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/match_param.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/names.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/region.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/replace.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/syntax.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/tree.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/utils.rs
+
+/Users/rj/Desktop/rustcoder_experiments/scaffold_20260209_184005/target/debug/deps/libonig-06f908605efbb98b.rmeta: /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/lib.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/buffers.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/find.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/flags.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/match_param.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/names.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/region.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/replace.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/syntax.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/tree.rs /Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/utils.rs
+
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/lib.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/buffers.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/find.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/flags.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/match_param.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/names.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/region.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/replace.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/syntax.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/tree.rs:
+/Users/rj/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/onig-6.5.1/src/utils.rs:

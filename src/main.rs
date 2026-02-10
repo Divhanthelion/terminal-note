@@ -5,7 +5,7 @@ pub mod crypto {
     use aes_gcm::aead::{Aead, Error as AesError};
     use argon2::{
         Argon2,
-        password_hash::{PasswordHasher, SaltString, Error as ArgonError},
+        password_hash::{SaltString, Error as ArgonError},
     };
     use rand::rngs::OsRng;
     use rand::RngCore;
@@ -83,7 +83,7 @@ pub mod crypto {
 pub mod note {
     use chrono::{DateTime, Utc};
     use serde_json::Value;
-    use std::str::FromStr;
+    
 
     /// Represents a single note with metadata.
     pub struct Note {
@@ -195,7 +195,7 @@ pub mod note {
 pub mod storage {
     use std::fs::{self, File};
     use std::io::{Read, Write};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use base64::{decode as b64_decode, encode as b64_encode};
     use rand::Rng;
@@ -264,11 +264,9 @@ pub mod storage {
 
                 // For decryption we need a password. Since `load_note` does not receive one,
                 // we cannot decrypt encrypted notes without a password. Return an error.
-                return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
-                    crate::crypto::argon2::ArgonError::Custom("password required for decryption".into()),
-                )));
-            }
-
+return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
+    ::argon2::password_hash::Error::Custom("password required for decryption".into()),
+)));
             // Plain JSON note
             let note = crate::note::Note::from_json(&v)?;
             Ok(note)
@@ -294,11 +292,11 @@ pub mod storage {
                     "ciphertext": b64_encode(ciphertext)
                 });
                 let mut file = File::create(&path)?;
-                file.write_all(serde_json::to_vec_pretty(&payload)?)?;
+                file.write_all(&serde_json::to_vec_pretty(&payload)?)?;
             } else {
                 // Plain
                 let mut file = File::create(&path)?;
-                file.write_all(serde_json::to_vec_pretty(&note.to_json())?)?;
+                file.write_all(&serde_json::to_vec_pretty(&note.to_json())?)?;
             }
             Ok(())
         }
@@ -393,7 +391,7 @@ pub mod search {
 
 pub mod app {
     use std::collections::HashMap;
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
 
     /// Holds the in‑memory state of the application.
     pub struct App {
