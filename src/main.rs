@@ -193,8 +193,144 @@ pub mod note {
 }
 
 pub mod storage {
-    //! Handles file I/O for notes, including optional encryption.
-    todo!()
+    use std::fs::{self, File};
+    use std::io::{Read, Write};
+    use std::path::{Path, PathBuf};
+
+    use base64::{decode as b64_decode, encode as b64_encode};
+    use rand::Rng;
+    use serde_json::{json, Value};
+
+    /// Root directory for all notes and the index file.
+    pub struct Storage {
+        pub base_dir: PathBuf,
+    }
+
+    /// Errors that can occur while accessing the filesystem.
+    #[derive(Debug)]
+    pub enum StorageError {
+        Io(std::io::Error),
+        Json(serde_json::Error),
+        Crypto(crate::crypto::CryptoError),
+    }
+
+    impl From<std::io::Error> for StorageError {
+        fn from(e: std::io::Error) -> Self { StorageError::Io(e) }
+    }
+    impl From<serde_json::Error> for StorageError {
+        fn from(e: serde_json::Error) -> Self { StorageError::Json(e) }
+    }
+    impl From<crate::crypto::CryptoError> for StorageError {
+        fn from(e: crate::crypto::CryptoError) -> Self { StorageError::Crypto(e) }
+    }
+
+    /// CRUD operations for notes on disk.
+    impl Storage {
+        /// Create a new `Storage`. The default base directory is `./notes`.
+        pub fn new() -> Result<Self, StorageError> {
+            let base_dir = PathBuf::from("./notes");
+            if !base_dir.exists() {
+                fs::create_dir_all(&base_dir)?;
+            }
+            Ok(Storage { base_dir })
+        }
+
+        /// Load a note by its id.
+        pub fn load_note(&self, id: &str) -> Result<crate::note::Note, StorageError> {
+            let path = self.note_path(id);
+            let mut file = File::open(&path)?;
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+
+            // Try to parse as JSON first
+            let v: Value = serde_json::from_slice(&data)?;
+
+            // Check if the file contains an encrypted payload
+            if v.get("ciphertext").is_some() {
+                // Encrypted note
+                let salt_b64 = v.get("salt").and_then(|v| v.as_str()).ok_or_else(|| {
+                    StorageError::Json(serde_json::Error::custom("missing salt in encrypted note"))
+                })?;
+                let nonce_b64 = v.get("nonce").and_then(|v| v.as_str()).ok_or_else(|| {
+                    StorageError::Json(serde_json::Error::custom("missing nonce in encrypted note"))
+                })?;
+                let ciphertext_b64 = v.get("ciphertext").and_then(|v| v.as_str()).ok_or_else(|| {
+                    StorageError::Json(serde_json::Error::custom("missing ciphertext in encrypted note"))
+                })?;
+
+                let salt = b64_decode(salt_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+                let nonce = b64_decode(nonce_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+                let ciphertext = b64_decode(ciphertext_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+                // For decryption we need a password. Since `load_note` does not receive one,
+                // we cannot decrypt encrypted notes without a password. Return an error.
+                return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
+                    crate::crypto::argon2::ArgonError::Custom("password required for decryption".into()),
+                )));
+            }
+
+            // Plain JSON note
+            let note = crate::note::Note::from_json(&v)?;
+            Ok(note)
+        }
+
+        /// Save a note. If `password_opt` is provided, the note will be encrypted.
+        pub fn save_note(
+            &self,
+            note: &crate::note::Note,
+            password_opt: Option<&str>,
+        ) -> Result<(), StorageError> {
+            let path = self.note_path(&note.id);
+            if password_opt.is_some() {
+                // Encrypt
+                let mut rng = rand::thread_rng();
+                let salt: [u8; 16] = rng.gen();
+                let key = crate::crypto::derive_key(password_opt.unwrap(), &salt)?;
+                let plaintext = serde_json::to_vec(&note.to_json())?;
+                let (ciphertext, nonce) = crate::crypto::encrypt(&plaintext, &key)?;
+                let payload = json!({
+                    "salt": b64_encode(salt),
+                    "nonce": b64_encode(nonce),
+                    "ciphertext": b64_encode(ciphertext)
+                });
+                let mut file = File::create(&path)?;
+                file.write_all(serde_json::to_vec_pretty(&payload)?)?;
+            } else {
+                // Plain
+                let mut file = File::create(&path)?;
+                file.write_all(serde_json::to_vec_pretty(&note.to_json())?)?;
+            }
+            Ok(())
+        }
+
+        /// Delete a note by its id.
+        pub fn delete_note(&self, id: &str) -> Result<(), StorageError> {
+            let path = self.note_path(id);
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            Ok(())
+        }
+
+        /// List all notes in the storage.
+        pub fn list_notes(&self) -> Result<Vec<crate::note::Note>, StorageError> {
+            let mut notes = Vec::new();
+            for entry in fs::read_dir(&self.base_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Ok(note) = self.load_note(&path.file_stem().unwrap().to_string_lossy()) {
+                        notes.push(note);
+                    }
+                }
+            }
+            Ok(notes)
+        }
+
+        fn note_path(&self, id: &str) -> PathBuf {
+            self.base_dir.join(format!("{}.json", id))
+        }
+    }
 }
 
 pub mod search {
