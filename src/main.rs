@@ -606,6 +606,15 @@ pub mod app {
         }
 
         pub fn initiate_lock(&mut self, id: &str) {
+             if let Some(note) = self.notes.get(id) {
+                 if note.encrypted && note.body.is_empty() && note.title == "🔒 Encrypted" {
+                     self.error_message = Some("Note is already locked. Unlock it first.".to_string());
+                     self.password_prompt_active = true;
+                     self.password_buffer.clear();
+                     self.pending_operation = None;
+                     return;
+                 }
+             }
              self.pending_operation = Some(PendingOperation::Lock(id.to_string()));
              self.password_prompt_active = true;
              self.password_buffer.clear();
@@ -639,6 +648,11 @@ pub mod app {
                      }
                      PendingOperation::Lock(id) => {
                          if let Some(note) = self.notes.get(&id) {
+                             if note.encrypted && note.body.is_empty() && note.title == "🔒 Encrypted" {
+                                 self.error_message = Some("Cannot lock an already locked note.".to_string());
+                                 self.password_buffer.clear();
+                                 return Ok(());
+                             }
                              // Save with password
                              match self.storage.save_note(note, Some(&self.password_buffer)) {
                                  Ok(_) => {
