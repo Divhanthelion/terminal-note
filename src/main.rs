@@ -550,7 +550,7 @@ pub mod ui {
     /// Errors that can occur during rendering or input handling.
     #[derive(Debug)]
     pub enum UIError {
-        Tui(ratatui::tui::errors::TuiError),
+        Tui(ratatui::error::TuiError),
         Crossterm(crossterm::event::EventParseError),
     }
 
