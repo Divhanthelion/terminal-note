@@ -626,8 +626,40 @@ pub mod ui {
 }
 
 pub mod main {
-    //! Application entry point that wires everything together.
-    todo!()
+    use std::error::Error;
+    use crate::{
+        storage::Storage,
+        app::App,
+        ui::UI,
+    };
+
+    /// Initializes storage, app state and runs the UI loop.
+    pub fn main() -> Result<(), Box<dyn Error>> {
+        // Create storage backend
+        let storage = Storage::new()
+            .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+
+        // Load all notes into the application state
+        let mut app = App::new(&storage)
+            .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+
+        // Create the UI
+        let mut ui = UI::new()
+            .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+
+        // Main event loop
+        loop {
+            // Handle user input; break on error (e.g., exit command)
+            match ui.handle_input(&mut app) {
+                Ok(_) => {}
+                Err(e) => return Err(Box::<dyn Error>::from(e.to_string())),
+            }
+
+            // Render the UI; propagate any rendering errors
+            ui.render(&app)
+                .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+        }
+    }
 }
 
 fn main() {
