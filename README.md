@@ -6,44 +6,44 @@ A terminal-based notes application (TUI) written in Rust with a clean interface 
 
 - 📝 **Markdown editing** (planned)
 - - 🔒 **AES-256-GCM encryption** with Argon2 key derivation
-  - - 🔍 **Full-text search** with inverted index
-    - - 💾 **Auto-save** to individual JSON files
-      - - 🎨 **Clean TUI interface** built with Ratatui
+ - - 🔍 **Full-text search** with inverted index
+ - - 💾 **Auto-save** to individual JSON files
+ - - 🎨 **Clean TUI interface** built with Ratatui
        
-        - ## Core Technologies
+ - ## Core Technologies
        
-        - - **Rust** - Language
-          - - **Ratatui** - TUI framework
-            - - **Crossterm** - Terminal backend and event handling
-              - - **AES-GCM & Argon2** - Cryptographic primitives
-                - - **Serde** - Serialization/Deserialization
-                  - - **Chrono** - Time management
+ - - **Rust** - Language
+ - - **Ratatui** - TUI framework
+ - - **Crossterm** - Terminal backend and event handling
+ - - **AES-GCM & Argon2** - Cryptographic primitives
+ - - **Serde** - Serialization/Deserialization
+ - - **Chrono** - Time management
                    
-                    - ## Architecture
+     - ## Architecture
                    
-                    - The project follows a modular design within `src/main.rs`:
+       - The project follows a modular design within `src/main.rs`:
                    
-                    - - **crypto** - Handles encryption, decryption, and key derivation
-                      - - **note** - Defines the Note struct and JSON serialization logic
-                        - - **storage** - Manages disk I/O, saving and loading notes from `./notes/`
-                          - - **search** - Implements a simple inverted index for full-text search
-                            - - **app** - Maintains the in-memory state of the application
-                              - - **ui** - Handles terminal rendering and user input
+         - - **crypto** - Handles encryption, decryption, and key derivation
+         - - **note** - Defines the Note struct and JSON serialization logic
+         - - **storage** - Manages disk I/O, saving and loading notes from `./notes/`
+         - - **search** - Implements a simple inverted index for full-text search
+         - - **app** - Maintains the in-memory state of the application
+         - - **ui** - Handles terminal rendering and user input
                                
-                                - ## Building and Running
+         - ## Building and Running
                                
-                                - ### Prerequisites
+         - ### Prerequisites
                                
-                                - - Rust (Cargo)
+         - - Rust (Cargo)
                                  
-                                  - ### Key Commands
+         - ### Key Commands
                                  
-                                  - ```bash
-                                    # Run the application
-                                    cargo run
+         - ```bash
+        # Run the application
+        cargo run
 
-                                    # Build release version
-                                    cargo build --release
+        # Build release version
+        cargo build --release
 
                                     # Run tests (Note: Tests are not yet implemented)
                                     cargo test
