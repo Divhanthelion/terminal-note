@@ -17,3 +17,13 @@ Each module section contains:
 
 ---
 
+## search
+
+**Trait implementations:**
+- `none`
+
+**Key signatures:**
+- ``pub fn new(notes: &[crate::note::Note]) -> Self``
+- `&nbsp;&nbsp;`pub fn query(&self`
+- `term: &str) -> Vec<String>``
+
