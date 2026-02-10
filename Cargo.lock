@@ -167,6 +167,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -574,23 +575,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
-]
-
-[[package]]
-name = "locknote"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "argon2",
- "base64",
- "chrono",
- "crossterm",
- "directories",
- "rand",
- "ratatui",
- "serde",
- "serde_json",
- "syntect",
 ]
 
 [[package]]
@@ -1083,6 +1067,23 @@ dependencies = [
  "thiserror",
  "walkdir",
  "yaml-rust",
+]
+
+[[package]]
+name = "terminal-note"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "base64",
+ "chrono",
+ "crossterm",
+ "directories",
+ "rand",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "syntect",
 ]
 
 [[package]]

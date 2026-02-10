@@ -10,7 +10,6 @@ pub mod crypto {
     };
     use rand::rngs::OsRng;
     use rand::RngCore;
-    use base64;
 
     /// Holds the derived key and salt for a note.
     pub struct CryptoContext {
@@ -39,7 +38,7 @@ pub mod crypto {
     /// Derives a 256‑bit key from the password and salt using Argon2.
     pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], CryptoError> {
         // Argon2 requires a base64 encoded salt string.
-        let salt_str = SaltString::b64_encode(salt).map_err(CryptoError::Argon2)?;
+        let salt_str = SaltString::encode_b64(salt).map_err(CryptoError::Argon2)?;
         let argon2 = Argon2::default();
 
         // Hash the password with the given salt.
@@ -47,24 +46,14 @@ pub mod crypto {
             .hash_password(password.as_bytes(), &salt_str)
             .map_err(CryptoError::Argon2)?;
 
-        // The hash string has the form:
-        // $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>
-        // We need the base64 encoded <hash> part.
-        let hash_str = hash_obj.to_string();
-        let parts: Vec<&str> = hash_str.split('$').collect();
-        if parts.len() < 5 {
-            return Err(CryptoError::Custom("invalid hash format".into()));
-        }
-        let hash_b64 = parts[parts.len() - 1];
-        let hash_bytes =
-            base64::decode(hash_b64).map_err(|_| CryptoError::Custom("invalid base64".into()))?;
+        let hash_bytes = hash_obj.hash.ok_or_else(|| CryptoError::Custom("no hash in output".into()))?;
 
         if hash_bytes.len() != 32 {
-            return Err(CryptoError::Custom("invalid hash length".into()));
+            return Err(CryptoError::Custom(format!("invalid hash length: {}", hash_bytes.len())));
         }
 
         let mut key = [0u8; 32];
-        key.copy_from_slice(&hash_bytes);
+        key.copy_from_slice(hash_bytes.as_bytes());
         Ok(key)
     }
 
@@ -125,7 +114,7 @@ pub mod note {
         pub fn new(title: &str, body: &str) -> Self {
             let now = Utc::now();
             Self {
-                id: format!("{}", now.timestamp_nanos()),
+                id: format!("{}", now.timestamp_nanos_opt().unwrap_or(0)),
                 title: title.to_string(),
                 body: body.to_string(),
                 created_at: now,
@@ -212,7 +201,7 @@ pub mod storage {
     use std::io::{Read, Write};
     use std::path::PathBuf;
 
-    use base64::{decode as b64_decode, encode as b64_encode};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use rand::Rng;
     use serde::ser::Error;
     use serde_json::{json, Value};
@@ -326,9 +315,9 @@ pub mod storage {
                 StorageError::Json(serde_json::Error::custom("missing ciphertext"))
             })?;
 
-            let salt = b64_decode(salt_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-            let nonce = b64_decode(nonce_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-            let ciphertext = b64_decode(ciphertext_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let salt = BASE64.decode(salt_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let nonce = BASE64.decode(nonce_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let ciphertext = BASE64.decode(ciphertext_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
             let key = crate::crypto::derive_key(password, &salt)?;
             let plaintext = crate::crypto::decrypt(&ciphertext, &nonce, &key).map_err(StorageError::Crypto)?;
@@ -358,9 +347,9 @@ pub mod storage {
                     "id": note.id,
                     "created_at": note.created_at.to_rfc3339(),
                     "updated_at": note.updated_at.to_rfc3339(),
-                    "salt": b64_encode(salt),
-                    "nonce": b64_encode(nonce),
-                    "ciphertext": b64_encode(ciphertext)
+                    "salt": BASE64.encode(salt),
+                    "nonce": BASE64.encode(nonce),
+                    "ciphertext": BASE64.encode(ciphertext)
                 });
                 let mut file = File::create(&path)?;
                 file.write_all(&serde_json::to_vec_pretty(&payload)?)?;
@@ -651,17 +640,22 @@ pub mod app {
                      PendingOperation::Lock(id) => {
                          if let Some(note) = self.notes.get(&id) {
                              // Save with password
-                             if let Err(e) = self.storage.save_note(note, Some(&self.password_buffer)) {
-                                 return Err(AppError::Storage(e));
+                             match self.storage.save_note(note, Some(&self.password_buffer)) {
+                                 Ok(_) => {
+                                     // Reload to reflect encrypted state
+                                     if let Ok(note) = self.storage.load_note(&id) {
+                                          self.notes.insert(id, note);
+                                     }
+                                     self.password_prompt_active = false;
+                                     self.password_buffer.clear();
+                                     self.pending_operation = None;
+                                     self.error_message = None;
+                                 }
+                                 Err(e) => {
+                                     self.error_message = Some(format!("Error: {}", e));
+                                     self.password_buffer.clear();
+                                 }
                              }
-                             // Reload to reflect encrypted state
-                             if let Ok(note) = self.storage.load_note(&id) {
-                                  self.notes.insert(id, note);
-                             }
-                             self.password_prompt_active = false;
-                             self.password_buffer.clear();
-                             self.pending_operation = None;
-                             self.error_message = None;
                          }
                      }
                  }
@@ -697,7 +691,7 @@ pub mod ui {
     use std::io::{stdout, Stdout};
 
     use crossterm::{
-        event::{read, Event, KeyCode, EnableBracketedPaste, DisableBracketedPaste},
+        event::{read, Event, KeyCode, KeyEventKind, EnableBracketedPaste, DisableBracketedPaste},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     };
@@ -904,6 +898,10 @@ pub mod ui {
 
                 match event {
                     Event::Key(key_event) => {
+                        if key_event.kind == KeyEventKind::Release {
+                             return Ok(());
+                        }
+
                         if app.password_prompt_active {
                              match key_event.code {
                                  KeyCode::Esc => app.cancel_password(),
@@ -911,9 +909,11 @@ pub mod ui {
                                      let _ = app.submit_password();
                                  }
                                  KeyCode::Backspace => {
+                                     app.error_message = None;
                                      app.password_buffer.pop();
                                  }
                                  KeyCode::Char(c) => {
+                                     app.error_message = None;
                                      app.password_buffer.push(c);
                                  }
                                  _ => {}

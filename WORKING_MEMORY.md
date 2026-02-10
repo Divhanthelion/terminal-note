@@ -1,29 +1,8 @@
-# WORKING MEMORY
+To push the changes to GitHub, I need the remote repository URL. 
 
-Cross-module knowledge base. Each module leaves notes for modules that depend on it.
+Please provide the URL for the new `terminal-note` repository (e.g., `https://github.com/yourusername/terminal-note.git`).
 
-## How to Read This File
-When implementing a module, find the sections for your dependencies and pay attention to:
-- Method signatures (especially return types: Option vs Result, &T vs T)
-- Trait implementations you can rely on (FromStr, Clone, etc.)
-- Gotchas and non-obvious patterns
-
-## How Notes Are Structured
-Each module section contains:
-- **Key Types**: The main structs/enums and their purpose
-- **Critical Signatures**: Method signatures that are easy to get wrong
-- **Trait Impls**: What traits are implemented (use these!)
-- **Gotchas**: Things that will break your code if you assume wrong
-
----
-
-## search
-
-**Trait implementations:**
-- `none`
-
-**Key signatures:**
-- ``pub fn new(notes: &[crate::note::Note]) -> Self``
-- `&nbsp;&nbsp;`pub fn query(&self`
-- `term: &str) -> Vec<String>``
-
+Once you provide the URL, I will:
+1.  Configure the remote.
+2.  Commit the changes (renaming and encryption features).
+3.  Push to the `main` branch.
