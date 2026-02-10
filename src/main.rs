@@ -198,8 +198,61 @@ pub mod storage {
 }
 
 pub mod search {
-    //! Implements a simple full‑text search index over note titles and bodies.
-    todo!()
+    use std::collections::HashMap;
+    use crate::note::Note;
+
+    /// Inverted index mapping terms to note IDs.
+    pub struct SearchEngine {
+        pub index: HashMap<String, Vec<String>>,
+    }
+
+    impl SearchEngine {
+        /// Builds the index from a slice of notes.
+        ///
+        /// The index maps each lower‑cased term (split on whitespace) to a list of
+        /// note IDs that contain the term in either title or body. Duplicate IDs
+        /// for a given term are removed.
+        pub fn new(notes: &[Note]) -> Self {
+            let mut index: HashMap<String, Vec<String>> = HashMap::new();
+
+            for note in notes {
+                let id = note.id.clone();
+                // Tokenize title and body
+                for term in tokenize(&note.title) {
+                    let entry = index.entry(term).or_insert_with(Vec::new);
+                    if !entry.contains(&id) {
+                        entry.push(id.clone());
+                    }
+                }
+                for term in tokenize(&note.body) {
+                    let entry = index.entry(term).or_insert_with(Vec::new);
+                    if !entry.contains(&id) {
+                        entry.push(id.clone());
+                    }
+                }
+            }
+
+            SearchEngine { index }
+        }
+
+        /// Returns a vector of note IDs that contain the given term.
+        ///
+        /// The search is case‑insensitive; `term` is lower‑cased before lookup.
+        /// If the term does not exist in the index, an empty vector is returned.
+        pub fn query(&self, term: &str) -> Vec<String> {
+            let key = term.to_lowercase();
+            self.index.get(&key).cloned().unwrap_or_default()
+        }
+    }
+
+    /// Simple tokenizer: splits on whitespace and lower‑cases each token.
+    ///
+    /// This helper is intentionally minimal; it does not strip punctuation.
+    fn tokenize(text: &str) -> Vec<String> {
+        text.split_whitespace()
+            .map(|s| s.to_lowercase())
+            .collect()
+    }
 }
 
 pub mod app {
