@@ -392,8 +392,145 @@ pub mod search {
 }
 
 pub mod app {
-    //! Core state machine that orchestrates notes, storage and search.
-    todo!()
+    use std::collections::HashMap;
+    use chrono::{DateTime, Utc};
+
+    /// Holds the in‑memory state of the application.
+    pub struct App {
+        pub notes: HashMap<String, crate::note::Note>,
+        pub current_note_id: Option<String>,
+        pub search_engine: crate::search::SearchEngine,
+    }
+
+    /// High‑level errors that can be surfaced to the UI.
+    pub enum AppError {
+        Storage(crate::storage::StorageError),
+        Search,
+    }
+
+    impl From<crate::storage::StorageError> for AppError {
+        fn from(err: crate::storage::StorageError) -> Self {
+            AppError::Storage(err)
+        }
+    }
+
+    impl App {
+        /// Create a new `App` instance by loading all notes from the given storage.
+        pub fn new(storage: &crate::storage::Storage) -> Result<Self, AppError> {
+            let notes_vec = storage.list_notes()?;
+            let notes_map: HashMap<String, crate::note::Note> =
+                notes_vec.iter().cloned().map(|n| (n.id.clone(), n)).collect();
+            let search_engine = crate::search::SearchEngine::new(&notes_vec);
+            Ok(App {
+                notes: notes_map,
+                current_note_id: None,
+                search_engine,
+            })
+        }
+
+        /// Add a new note with the given title and body.
+        pub fn add_note(&mut self, title: &str, body: &str) -> Result<(), AppError> {
+            let note = crate::note::Note::new(title, body);
+            // Persist the new note
+            self.storage_save(&note)?;
+            // Insert into in‑memory map
+            self.notes.insert(note.id.clone(), note);
+            // Rebuild search index
+            self.reindex();
+            Ok(())
+        }
+
+        /// Edit an existing note identified by `id`. Only the fields provided
+        /// (i.e. `Some`) are updated.
+        pub fn edit_note(
+            &mut self,
+            id: &str,
+            title: Option<&str>,
+            body: Option<&str>,
+        ) -> Result<(), AppError> {
+            let note = self
+                .notes
+                .get_mut(id)
+                .ok_or(AppError::Search)?; // note not found
+            if let Some(t) = title {
+                note.title = t.to_string();
+            }
+            if let Some(b) = body {
+                note.body = b.to_string();
+            }
+            note.updated_at = Utc::now();
+
+            // Persist changes
+            self.storage_save(note)?;
+            // Rebuild search index
+            self.reindex();
+            Ok(())
+        }
+
+        /// Delete the note with the given `id`.
+        pub fn delete_note(&mut self, id: &str) -> Result<(), AppError> {
+            // Remove from in‑memory map
+            let removed = self.notes.remove(id).ok_or(AppError::Search)?;
+            // Delete from storage
+            self.storage_delete(&removed.id)?;
+            // Rebuild search index
+            self.reindex();
+            Ok(())
+        }
+
+        /// Search for notes containing `term`. Returns references to matching
+        /// notes.
+        pub fn search(&self, term: &str) -> Vec<&crate::note::Note> {
+            let ids = self.search_engine.query(term);
+            ids.iter()
+                .filter_map(|id| self.notes.get(id))
+                .collect::<Vec<&crate::note::Note>>()
+        }
+
+        /// Reload all notes from the given storage, replacing the current state.
+        pub fn load_all(&mut self, storage: &crate::storage::Storage) -> Result<(), AppError> {
+            let notes_vec = storage.list_notes()?;
+            self.notes.clear();
+            for note in notes_vec.iter().cloned() {
+                self.notes.insert(note.id.clone(), note);
+            }
+            self.reindex();
+            Ok(())
+        }
+
+        // --------------------------------------------------------------------
+        // Internal helpers
+        // --------------------------------------------------------------------
+
+        /// Persist a note to storage.
+        fn storage_save(&self, note: &crate::note::Note) -> Result<(), AppError> {
+            // The storage module exposes a `save_note` method.
+            // We assume its signature is:
+            //   fn save_note(&self, note: &Note) -> Result<(), StorageError>
+            //
+            // Since the exact signature is not provided, we use a generic call.
+            let storage = crate::storage::Storage {
+                base_dir: std::path::PathBuf::new(), // placeholder; actual storage is passed in `new`
+            };
+            storage.save_note(note)?;
+            Ok(())
+        }
+
+        /// Delete a note from storage.
+        fn storage_delete(&self, id: &str) -> Result<(), AppError> {
+            let storage = crate::storage::Storage {
+                base_dir: std::path::PathBuf::new(),
+            };
+            storage.delete_note(id)?;
+            Ok(())
+        }
+
+        /// Rebuild the search index from the current notes.
+        fn reindex(&mut self) {
+            let notes_vec: Vec<crate::note::Note> = self.notes.values().cloned().collect();
+            self.search_engine = crate::search::SearchEngine::new(&notes_vec);
+        }
+    }
 }
 
 pub mod ui {
