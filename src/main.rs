@@ -534,8 +534,95 @@ pub mod app {
 }
 
 pub mod ui {
-    //! Renders the TUI and handles user input.
-    todo!()
+    use std::io::{stdout, Stdout};
+
+    use crossterm::event::{read, Event, KeyCode};
+    use ratatui::{
+        backend::CrosstermBackend,
+        layout::{Constraint, Direction, Layout},
+        style::{Style, Modifier},
+        terminal::Terminal,
+        widgets::{Block, Borders, List, ListItem},
+    };
+
+    /// Encapsulates the terminal backend.
+    pub struct UI {
+        pub terminal: Terminal<CrosstermBackend<Stdout>>,
+    }
+
+    /// Errors that can occur during rendering or input handling.
+    #[derive(Debug)]
+    pub enum UIError {
+        Tui(ratatui::tui::errors::TuiError),
+        Crossterm(crossterm::event::EventParseError),
+    }
+
+    impl UI {
+        /// Create a new `UI` instance.
+        ///
+        /// This function initializes the Crossterm backend and creates a
+        /// `ratatui::Terminal`.  Any errors from the TUI library are wrapped in
+        /// `UIError::Tui`.
+        pub fn new() -> Result<Self, UIError> {
+            let backend = CrosstermBackend::new(stdout());
+            let terminal = Terminal::new(backend).map_err(UIError::Tui)?;
+            Ok(Self { terminal })
+        }
+
+        /// Render the current state of `app` to the screen.
+        ///
+        /// The UI displays a simple list of note titles.  Errors from the TUI
+        /// library are wrapped in `UIError::Tui`.
+        pub fn render(&mut self, app: &crate::app::App) -> Result<(), UIError> {
+            let notes = app
+                .notes
+                .values()
+                .map(|n| ListItem::new(n.title.clone()))
+                .collect::<Vec<_>>();
+
+            let list = List::new(notes)
+                .block(Block::default().borders(Borders::ALL).title("Notes"))
+                .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+
+            self.terminal
+                .draw(|f| {
+                    let size = f.size();
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .margin(1)
+                        .constraints([Constraint::Percentage(100)].as_ref())
+                        .split(size);
+
+                    f.render_widget(list, chunks[0]);
+                })
+                .map_err(UIError::Tui)
+        }
+
+        /// Handle a single user input event.
+        ///
+        /// The function reads one `crossterm::event::Event`.  It currently
+        /// ignores all events except the `q` key, which is treated as a request to
+        /// exit.  The function returns `Ok(())` for all inputs; callers can decide
+        /// what to do with the event if they wish.
+        ///
+        /// Errors from `crossterm::event::read` are wrapped in
+        /// `UIError::Crossterm`.
+        pub fn handle_input(&mut self, _app: &mut crate::app::App) -> Result<(), UIError> {
+            let event = read().map_err(UIError::Crossterm)?;
+
+            match event {
+                Event::Key(key_event) => match key_event.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        // In a real application we might set a flag to exit.
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+
+            Ok(())
+        }
+    }
 }
 
 pub mod main {
