@@ -264,11 +264,10 @@ pub mod storage {
 
                 // For decryption we need a password. Since `load_note` does not receive one,
                 // we cannot decrypt encrypted notes without a password. Return an error.
-return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
-    ::argon2::password_hash::Error::Custom("password required for decryption".into()),
-)));
-            // Plain JSON note
-            let note = crate::note::Note::from_json(&v)?;
+                return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
+                    ::argon2::password_hash::Error::Custom("password required for decryption".into()),
+                )));
+            }
             Ok(note)
         }
 
