@@ -81,8 +81,115 @@ pub mod crypto {
 }
 
 pub mod note {
-    //! Defines the core data model for a note and related errors.
-    todo!()
+    use chrono::{DateTime, Utc};
+    use serde_json::Value;
+    use std::str::FromStr;
+
+    /// Represents a single note with metadata.
+    pub struct Note {
+        pub id: String,
+        pub title: String,
+        pub body: String,
+        pub created_at: DateTime<Utc>,
+        pub updated_at: DateTime<Utc>,
+        pub encrypted: bool,
+    }
+
+    /// Errors that can occur while manipulating notes.
+    pub enum NoteError {
+        Io(std::io::Error),
+        Json(serde_json::Error),
+        Validation(String),
+    }
+
+    impl Note {
+        /// Creates a new note with the given title and body.
+        ///
+        /// The `id` is generated from the current timestamp in nanoseconds,
+        /// and both `created_at` and `updated_at` are set to the current UTC time.
+        /// The note is initially unencrypted (`encrypted = false`).
+        pub fn new(title: &str, body: &str) -> Self {
+            let now = Utc::now();
+            Self {
+                id: format!("{}", now.timestamp_nanos()),
+                title: title.to_string(),
+                body: body.to_string(),
+                created_at: now,
+                updated_at: now,
+                encrypted: false,
+            }
+        }
+
+        /// Parses a `serde_json::Value` into a `Note`.
+        ///
+        /// Expects the JSON object to contain the keys:
+        /// `id`, `title`, `body`, `created_at`, `updated_at`, and `encrypted`.
+        /// The timestamps must be RFC3339 strings.
+        pub fn from_json(json: &Value) -> Result<Self, NoteError> {
+            // Helper to extract a string field
+            fn get_str(json: &Value, key: &str) -> Result<String, NoteError> {
+                json.get(key)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| {
+                        NoteError::Validation(format!("Missing or invalid field '{}'", key))
+                    })
+            }
+
+            // Helper to extract a bool field
+            fn get_bool(json: &Value, key: &str) -> Result<bool, NoteError> {
+                json.get(key)
+                    .and_then(|v| v.as_bool())
+                    .ok_or_else(|| {
+                        NoteError::Validation(format!("Missing or invalid field '{}'", key))
+                    })
+            }
+
+            // Helper to extract a DateTime<Utc> from an RFC3339 string
+            fn get_datetime(json: &Value, key: &str) -> Result<DateTime<Utc>, NoteError> {
+                let s = get_str(json, key)?;
+                DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(NoteError::Json)
+            }
+
+            let id = get_str(json, "id")?;
+            let title = get_str(json, "title")?;
+            let body = get_str(json, "body")?;
+            let created_at = get_datetime(json, "created_at")?;
+            let updated_at = get_datetime(json, "updated_at")?;
+            let encrypted = get_bool(json, "encrypted")?;
+
+            Ok(Self {
+                id,
+                title,
+                body,
+                created_at,
+                updated_at,
+                encrypted,
+            })
+        }
+
+        /// Serializes the note into a `serde_json::Value`.
+        ///
+        /// The timestamps are formatted as RFC3339 strings.
+        pub fn to_json(&self) -> Value {
+            let mut map = serde_json::Map::new();
+            map.insert("id".to_string(), Value::String(self.id.clone()));
+            map.insert("title".to_string(), Value::String(self.title.clone()));
+            map.insert("body".to_string(), Value::String(self.body.clone()));
+            map.insert(
+                "created_at".to_string(),
+                Value::String(self.created_at.to_rfc3339()),
+            );
+            map.insert(
+                "updated_at".to_string(),
+                Value::String(self.updated_at.to_rfc3339()),
+            );
+            map.insert("encrypted".to_string(), Value::Bool(self.encrypted));
+            Value::Object(map)
+        }
+    }
 }
 
 pub mod storage {
