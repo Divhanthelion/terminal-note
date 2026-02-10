@@ -1,11 +1,12 @@
 //! A clean, fast TUI notes app for Linux inspired by Apple Notes. Supports markdown editing, optional AES‑256‑GCM encryption with Argon2 key derivation, vim‑style bindings, full‑text search, syntax highlighting for code blocks and export to plain markdown.
 
 pub mod crypto {
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    use aes_gcm::aead::{Aead, Error as AesError};
-    use argon2::{
-        Argon2,
+     use std::fmt::Display;
+     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+     use aes_gcm::aead::Aead;
+     use argon2::{
         password_hash::{SaltString, Error as ArgonError},
+        Argon2, PasswordHasher,
     };
     use rand::rngs::OsRng;
     use rand::RngCore;
@@ -21,7 +22,18 @@ pub mod crypto {
     #[derive(Debug)]
     pub enum CryptoError {
         Argon2(ArgonError),
-        Aes(AesError),
+        Aes(String),
+        Custom(String),
+    }
+
+    impl Display for CryptoError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                CryptoError::Argon2(e) => write!(f, "Argon2 error: {}", e),
+                CryptoError::Aes(e) => write!(f, "AES error: {}", e),
+                CryptoError::Custom(e) => write!(f, "{}", e),
+            }
+        }
     }
 
     /// Derives a 256‑bit key from the password and salt using Argon2.
@@ -32,7 +44,7 @@ pub mod crypto {
 
         // Hash the password with the given salt.
         let hash_obj = argon2
-            .hash_password_simple(password, &salt_str)
+            .hash_password(password.as_bytes(), &salt_str)
             .map_err(CryptoError::Argon2)?;
 
         // The hash string has the form:
@@ -41,14 +53,14 @@ pub mod crypto {
         let hash_str = hash_obj.to_string();
         let parts: Vec<&str> = hash_str.split('$').collect();
         if parts.len() < 5 {
-            return Err(CryptoError::Argon2(ArgonError::InvalidFormat));
+            return Err(CryptoError::Custom("invalid hash format".into()));
         }
         let hash_b64 = parts[parts.len() - 1];
         let hash_bytes =
-            base64::decode(hash_b64).map_err(|_| CryptoError::Argon2(ArgonError::InvalidFormat))?;
+            base64::decode(hash_b64).map_err(|_| CryptoError::Custom("invalid base64".into()))?;
 
         if hash_bytes.len() != 32 {
-            return Err(CryptoError::Argon2(ArgonError::InvalidFormat));
+            return Err(CryptoError::Custom("invalid hash length".into()));
         }
 
         let mut key = [0u8; 32];
@@ -56,36 +68,38 @@ pub mod crypto {
         Ok(key)
     }
 
-    /// Encrypts data with AES‑256‑GCM, returns (ciphertext, nonce).
+/// Encrypts data with AES‑256‑GCM, returns (ciphertext, nonce).
     pub fn encrypt(plaintext: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(CryptoError::Aes)?;
+        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| CryptoError::Aes(e.to_string()))?;
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher
+let ciphertext = cipher
             .encrypt(nonce, plaintext)
-            .map_err(CryptoError::Aes)?;
+            .map_err(|e| CryptoError::Aes(format!("{}", e)))?;
 
-        Ok((ciphertext, nonce_bytes.to_vec()))
+        Ok((ciphertext, nonce.to_vec()))
     }
 
-    /// Decrypts data with AES‑256‑GCM.
-    pub fn decrypt(ciphertext: &[u8], nonce: &[u8], key: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(CryptoError::Aes)?;
-        let nonce = Nonce::from_slice(nonce);
-        let plaintext =
-            cipher.decrypt(nonce, ciphertext).map_err(CryptoError::Aes)?;
-        Ok(plaintext)
-    }
+/// Decrypts data with AES‑256‑GCM, returns plaintext.
+pub fn decrypt(ciphertext: &[u8], nonce: &[u8], key: &[u8]) -> Result<Vec<u8>, CryptoError> {
+           let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| CryptoError::Aes(e.to_string()))?;
+           let nonce = Nonce::from_slice(nonce);
+           let plaintext =
+               cipher.decrypt(nonce, ciphertext).map_err(|e| CryptoError::Aes(format!("{}", e)))?;
+           Ok(plaintext)
+       }
 }
 
 pub mod note {
     use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     
 
     /// Represents a single note with metadata.
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct Note {
         pub id: String,
         pub title: String,
@@ -145,13 +159,13 @@ pub mod note {
                     })
             }
 
-            // Helper to extract a DateTime<Utc> from an RFC3339 string
-            fn get_datetime(json: &Value, key: &str) -> Result<DateTime<Utc>, NoteError> {
-                let s = get_str(json, key)?;
-                DateTime::parse_from_rfc3339(&s)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(NoteError::Json)
-            }
+// Helper to extract a DateTime<Utc> from an RFC3339 string
+             fn get_datetime(json: &Value, key: &str) -> Result<DateTime<Utc>, NoteError> {
+                 let s = get_str(json, key)?;
+                 DateTime::parse_from_rfc3339(&s)
+                     .map(|dt| dt.with_timezone(&Utc))
+                     .map_err(|e| NoteError::Validation(format!("Invalid datetime: {}", e)))
+             }
 
             let id = get_str(json, "id")?;
             let title = get_str(json, "title")?;
@@ -193,12 +207,14 @@ pub mod note {
 }
 
 pub mod storage {
+    use std::fmt::Display;
     use std::fs::{self, File};
     use std::io::{Read, Write};
     use std::path::PathBuf;
 
     use base64::{decode as b64_decode, encode as b64_encode};
     use rand::Rng;
+    use serde::ser::Error;
     use serde_json::{json, Value};
 
     /// Root directory for all notes and the index file.
@@ -212,6 +228,16 @@ pub mod storage {
         Io(std::io::Error),
         Json(serde_json::Error),
         Crypto(crate::crypto::CryptoError),
+    }
+
+    impl Display for StorageError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                StorageError::Io(e) => write!(f, "IO error: {}", e),
+                StorageError::Json(e) => write!(f, "JSON error: {}", e),
+                StorageError::Crypto(e) => write!(f, "Crypto error: {}", e),
+            }
+        }
     }
 
     impl From<std::io::Error> for StorageError {
@@ -247,27 +273,67 @@ pub mod storage {
 
             // Check if the file contains an encrypted payload
             if v.get("ciphertext").is_some() {
-                // Encrypted note
-                let salt_b64 = v.get("salt").and_then(|v| v.as_str()).ok_or_else(|| {
-                    StorageError::Json(serde_json::Error::custom("missing salt in encrypted note"))
-                })?;
-                let nonce_b64 = v.get("nonce").and_then(|v| v.as_str()).ok_or_else(|| {
-                    StorageError::Json(serde_json::Error::custom("missing nonce in encrypted note"))
-                })?;
-                let ciphertext_b64 = v.get("ciphertext").and_then(|v| v.as_str()).ok_or_else(|| {
-                    StorageError::Json(serde_json::Error::custom("missing ciphertext in encrypted note"))
-                })?;
+                // Encrypted note - Return placeholder
+                let created_at = if let Some(s) = v.get("created_at").and_then(|v| v.as_str()) {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now())
+                } else {
+                    chrono::Utc::now()
+                };
 
-                let salt = b64_decode(salt_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-                let nonce = b64_decode(nonce_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-                let ciphertext = b64_decode(ciphertext_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+                let updated_at = if let Some(s) = v.get("updated_at").and_then(|v| v.as_str()) {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now())
+                } else {
+                    chrono::Utc::now()
+                };
 
-                // For decryption we need a password. Since `load_note` does not receive one,
-                // we cannot decrypt encrypted notes without a password. Return an error.
-                return Err(StorageError::Crypto(crate::crypto::CryptoError::Argon2(
-                    ::argon2::password_hash::Error::Custom("password required for decryption".into()),
-                )));
+                return Ok(crate::note::Note {
+                    id: id.to_string(),
+                    title: "🔒 Encrypted".to_string(),
+                    body: "".to_string(),
+                    created_at,
+                    updated_at,
+                    encrypted: true,
+                });
             }
+            let note: crate::note::Note = serde_json::from_value(v)?;
+            Ok(note)
+        }
+
+        pub fn unlock_note(&self, id: &str, password: &str) -> Result<crate::note::Note, StorageError> {
+            let path = self.note_path(id);
+            let mut file = File::open(&path)?;
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+
+            let v: Value = serde_json::from_slice(&data)?;
+            
+            if v.get("ciphertext").is_none() {
+                // Not encrypted, just load it
+                return self.load_note(id);
+            }
+
+            let salt_b64 = v.get("salt").and_then(|v| v.as_str()).ok_or_else(|| {
+                StorageError::Json(serde_json::Error::custom("missing salt"))
+            })?;
+            let nonce_b64 = v.get("nonce").and_then(|v| v.as_str()).ok_or_else(|| {
+                StorageError::Json(serde_json::Error::custom("missing nonce"))
+            })?;
+            let ciphertext_b64 = v.get("ciphertext").and_then(|v| v.as_str()).ok_or_else(|| {
+                StorageError::Json(serde_json::Error::custom("missing ciphertext"))
+            })?;
+
+            let salt = b64_decode(salt_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let nonce = b64_decode(nonce_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let ciphertext = b64_decode(ciphertext_b64).map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+            let key = crate::crypto::derive_key(password, &salt)?;
+            let plaintext = crate::crypto::decrypt(&ciphertext, &nonce, &key).map_err(StorageError::Crypto)?;
+
+            let note: crate::note::Note = serde_json::from_slice(&plaintext)?;
             Ok(note)
         }
 
@@ -278,14 +344,20 @@ pub mod storage {
             password_opt: Option<&str>,
         ) -> Result<(), StorageError> {
             let path = self.note_path(&note.id);
-            if password_opt.is_some() {
+            if let Some(password) = password_opt {
                 // Encrypt
                 let mut rng = rand::thread_rng();
                 let salt: [u8; 16] = rng.gen();
-                let key = crate::crypto::derive_key(password_opt.unwrap(), &salt)?;
-                let plaintext = serde_json::to_vec(&note.to_json())?;
+                let key = crate::crypto::derive_key(password, &salt)?;
+                let mut note_to_encrypt = note.clone();
+                note_to_encrypt.encrypted = true;
+                let plaintext = serde_json::to_vec(&note_to_encrypt.to_json())?;
                 let (ciphertext, nonce) = crate::crypto::encrypt(&plaintext, &key)?;
+                
                 let payload = json!({
+                    "id": note.id,
+                    "created_at": note.created_at.to_rfc3339(),
+                    "updated_at": note.updated_at.to_rfc3339(),
                     "salt": b64_encode(salt),
                     "nonce": b64_encode(nonce),
                     "ciphertext": b64_encode(ciphertext)
@@ -391,21 +463,47 @@ pub mod search {
 pub mod app {
     use std::collections::HashMap;
     use chrono::Utc;
+    use crate::storage::Storage;
 
     /// Holds the in‑memory state of the application.
     pub struct App {
         pub notes: HashMap<String, crate::note::Note>,
         pub current_note_id: Option<String>,
         pub search_engine: crate::search::SearchEngine,
+        pub storage: Storage,
+        pub should_quit: bool,
+        pub selected_index: usize,
+        pub is_editing: bool,
+        
+        // Password Prompt State
+        pub password_prompt_active: bool,
+        pub password_buffer: String,
+        pub pending_operation: Option<PendingOperation>,
+        pub error_message: Option<String>,
     }
 
-    /// High‑level errors that can be surfaced to the UI.
-    pub enum AppError {
-        Storage(crate::storage::StorageError),
-        Search,
+    #[derive(Clone)]
+    pub enum PendingOperation {
+        Unlock(String), // Note ID
+        Lock(String),   // Note ID
     }
 
-    impl From<crate::storage::StorageError> for AppError {
+/// High‑level errors that can be surfaced to the UI.
+     pub enum AppError {
+         Storage(crate::storage::StorageError),
+         Search,
+     }
+
+     impl std::fmt::Display for AppError {
+         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+             match self {
+                 AppError::Storage(e) => write!(f, "Storage error: {}", e),
+                 AppError::Search => write!(f, "Search error"),
+             }
+         }
+     }
+
+     impl From<crate::storage::StorageError> for AppError {
         fn from(err: crate::storage::StorageError) -> Self {
             AppError::Storage(err)
         }
@@ -413,7 +511,7 @@ pub mod app {
 
     impl App {
         /// Create a new `App` instance by loading all notes from the given storage.
-        pub fn new(storage: &crate::storage::Storage) -> Result<Self, AppError> {
+        pub fn new(storage: Storage) -> Result<Self, AppError> {
             let notes_vec = storage.list_notes()?;
             let notes_map: HashMap<String, crate::note::Note> =
                 notes_vec.iter().cloned().map(|n| (n.id.clone(), n)).collect();
@@ -422,6 +520,14 @@ pub mod app {
                 notes: notes_map,
                 current_note_id: None,
                 search_engine,
+                storage,
+                should_quit: false,
+                selected_index: 0,
+                is_editing: false,
+                password_prompt_active: false,
+                password_buffer: String::new(),
+                pending_operation: None,
+                error_message: None,
             })
         }
 
@@ -445,10 +551,9 @@ pub mod app {
             title: Option<&str>,
             body: Option<&str>,
         ) -> Result<(), AppError> {
-            let note = self
-                .notes
-                .get_mut(id)
-                .ok_or(AppError::Search)?; // note not found
+            // Clone the note to avoid borrowing issues
+            let mut note = self.notes.get(id).cloned().ok_or(AppError::Search)?;
+            
             if let Some(t) = title {
                 note.title = t.to_string();
             }
@@ -458,9 +563,12 @@ pub mod app {
             note.updated_at = Utc::now();
 
             // Persist changes
-            self.storage_save(note)?;
+            self.storage_save(&note)?;
             // Rebuild search index
             self.reindex();
+            
+            // Update the in-memory note after reindexing
+            self.notes.insert(id.to_string(), note);
             Ok(())
         }
 
@@ -485,8 +593,8 @@ pub mod app {
         }
 
         /// Reload all notes from the given storage, replacing the current state.
-        pub fn load_all(&mut self, storage: &crate::storage::Storage) -> Result<(), AppError> {
-            let notes_vec = storage.list_notes()?;
+        pub fn load_all(&mut self) -> Result<(), AppError> {
+            let notes_vec = self.storage.list_notes()?;
             self.notes.clear();
             for note in notes_vec.iter().cloned() {
                 self.notes.insert(note.id.clone(), note);
@@ -495,30 +603,85 @@ pub mod app {
             Ok(())
         }
 
+        pub fn get_sorted_note_ids(&self) -> Vec<String> {
+            let mut notes: Vec<_> = self.notes.values().collect::<Vec<_>>();
+            notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            notes.iter().map(|n| n.id.clone()).collect()
+        }
+
+        pub fn initiate_unlock(&mut self, id: &str) {
+             self.pending_operation = Some(PendingOperation::Unlock(id.to_string()));
+             self.password_prompt_active = true;
+             self.password_buffer.clear();
+             self.error_message = None;
+        }
+
+        pub fn initiate_lock(&mut self, id: &str) {
+             self.pending_operation = Some(PendingOperation::Lock(id.to_string()));
+             self.password_prompt_active = true;
+             self.password_buffer.clear();
+             self.error_message = None;
+        }
+
+        pub fn cancel_password(&mut self) {
+             self.password_prompt_active = false;
+             self.password_buffer.clear();
+             self.pending_operation = None;
+             self.error_message = None;
+        }
+
+        pub fn submit_password(&mut self) -> Result<(), AppError> {
+             if let Some(op) = self.pending_operation.clone() {
+                 match op {
+                     PendingOperation::Unlock(id) => {
+                         match self.storage.unlock_note(&id, &self.password_buffer) {
+                             Ok(note) => {
+                                 self.notes.insert(id, note);
+                                 self.password_prompt_active = false;
+                                 self.password_buffer.clear();
+                                 self.pending_operation = None;
+                                 self.error_message = None;
+                             }
+                             Err(_) => {
+                                 self.error_message = Some("Incorrect password".to_string());
+                                 self.password_buffer.clear();
+                             }
+                         }
+                     }
+                     PendingOperation::Lock(id) => {
+                         if let Some(note) = self.notes.get(&id) {
+                             // Save with password
+                             if let Err(e) = self.storage.save_note(note, Some(&self.password_buffer)) {
+                                 return Err(AppError::Storage(e));
+                             }
+                             // Reload to reflect encrypted state
+                             if let Ok(note) = self.storage.load_note(&id) {
+                                  self.notes.insert(id, note);
+                             }
+                             self.password_prompt_active = false;
+                             self.password_buffer.clear();
+                             self.pending_operation = None;
+                             self.error_message = None;
+                         }
+                     }
+                 }
+             }
+             Ok(())
+        }
+
         // --------------------------------------------------------------------
         // Internal helpers
         // --------------------------------------------------------------------
 
         /// Persist a note to storage.
         fn storage_save(&self, note: &crate::note::Note) -> Result<(), AppError> {
-            // The storage module exposes a `save_note` method.
-            // We assume its signature is:
-            //   fn save_note(&self, note: &Note) -> Result<(), StorageError>
-            //
-            // Since the exact signature is not provided, we use a generic call.
-            let storage = crate::storage::Storage {
-                base_dir: std::path::PathBuf::new(), // placeholder; actual storage is passed in `new`
-            };
-            storage.save_note(note)?;
+            self.storage.save_note(note, None)?;
             Ok(())
         }
 
         /// Delete a note from storage.
         fn storage_delete(&self, id: &str) -> Result<(), AppError> {
-            let storage = crate::storage::Storage {
-                base_dir: std::path::PathBuf::new(),
-            };
-            storage.delete_note(id)?;
+            self.storage.delete_note(id)?;
             Ok(())
         }
 
@@ -533,12 +696,16 @@ pub mod app {
 pub mod ui {
     use std::io::{stdout, Stdout};
 
-    use crossterm::event::{read, Event, KeyCode};
+    use crossterm::{
+        event::{read, Event, KeyCode, EnableBracketedPaste, DisableBracketedPaste},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    };
     use ratatui::{
         backend::CrosstermBackend,
         layout::{Constraint, Direction, Layout},
-        style::{Style, Modifier},
-        terminal::Terminal,
+        style::{Style, Modifier, Color},
+        Terminal,
         widgets::{Block, Borders, List, ListItem},
     };
 
@@ -550,71 +717,300 @@ pub mod ui {
     /// Errors that can occur during rendering or input handling.
     #[derive(Debug)]
     pub enum UIError {
-        Tui(ratatui::error::TuiError),
-        Crossterm(crossterm::event::EventParseError),
+        Tui(String),
+        Crossterm(std::io::Error),
+    }
+
+    impl std::fmt::Display for UIError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                UIError::Tui(e) => write!(f, "TUI error: {}", e),
+                UIError::Crossterm(e) => write!(f, "Crossterm error: {}", e),
+            }
+        }
+    }
+
+    impl From<std::io::Error> for UIError {
+        fn from(e: std::io::Error) -> Self {
+            UIError::Crossterm(e)
+        }
     }
 
     impl UI {
         /// Create a new `UI` instance.
-        ///
-        /// This function initializes the Crossterm backend and creates a
-        /// `ratatui::Terminal`.  Any errors from the TUI library are wrapped in
-        /// `UIError::Tui`.
         pub fn new() -> Result<Self, UIError> {
-            let backend = CrosstermBackend::new(stdout());
-            let terminal = Terminal::new(backend).map_err(UIError::Tui)?;
+            enable_raw_mode()?;
+            let mut stdout = stdout();
+            execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+            let backend = CrosstermBackend::new(stdout);
+            let terminal = Terminal::new(backend).map_err(|e| UIError::Tui(e.to_string()))?;
             Ok(Self { terminal })
         }
 
+        /// Cleanup the terminal state.
+        pub fn cleanup(&mut self) -> Result<(), UIError> {
+            let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
+            disable_raw_mode()?;
+            execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
+            self.terminal.show_cursor()?;
+            Ok(())
+        }
+
         /// Render the current state of `app` to the screen.
-        ///
-        /// The UI displays a simple list of note titles.  Errors from the TUI
-        /// library are wrapped in `UIError::Tui`.
         pub fn render(&mut self, app: &crate::app::App) -> Result<(), UIError> {
-            let notes = app
+            let mut notes = app
                 .notes
                 .values()
-                .map(|n| ListItem::new(n.title.clone()))
+                .collect::<Vec<_>>();
+            
+            notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+            let sidebar_items = notes
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let style = if i == app.selected_index {
+                        Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let title = if n.encrypted && n.body.is_empty() {
+                         format!("🔒 {}", n.id) // Or some other indicator
+                    } else {
+                         format!(" {}", n.title)
+                    };
+                    ListItem::new(title).style(style)
+                })
                 .collect::<Vec<_>>();
 
-            let list = List::new(notes)
-                .block(Block::default().borders(Borders::ALL).title("Notes"))
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+            let sidebar = List::new(sidebar_items)
+                .block(Block::default().borders(Borders::ALL).title(" Notes "))
+                .style(Style::default().fg(Color::White));
+
+            let main_content = if let Some(note) = notes.get(app.selected_index) {
+                let mut text = vec![
+                    ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled("Title: ", Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan)),
+                        ratatui::text::Span::raw(&note.title),
+                    ]),
+                    ratatui::text::Line::from(""),
+                ];
+
+                if note.encrypted && note.body.is_empty() {
+                    text.push(ratatui::text::Line::from(ratatui::text::Span::styled(
+                        "This note is encrypted. Press Enter to unlock.",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::ITALIC),
+                    )));
+                } else {
+                    for line in note.body.lines() {
+                        text.push(ratatui::text::Line::from(line));
+                    }
+                }
+                
+                // Add a cursor-like block at the end if editing
+                if app.is_editing {
+                    text.push(ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled("█", Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK))
+                    ]));
+                }
+
+                let block_title = if app.is_editing {
+                    " Editing Content (Esc to save) "
+                } else if note.encrypted && note.body.is_empty() {
+                    " Encrypted Note "
+                } else {
+                    " Note Content (Enter to edit, 'l' to lock) "
+                };
+
+                let block_style = if app.is_editing {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+
+                ratatui::widgets::Paragraph::new(text)
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .title(block_title)
+                        .border_style(block_style))
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+            } else {
+                ratatui::widgets::Paragraph::new("No note selected. Press 'n' to create one.")
+                    .block(Block::default().borders(Borders::ALL).title("Note Content"))
+            };
 
             self.terminal
                 .draw(|f| {
-                    let size = f.size();
+                    let size = f.area();
                     let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .margin(1)
-                        .constraints([Constraint::Percentage(100)].as_ref())
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(30),
+                            Constraint::Percentage(70),
+                        ].as_ref())
                         .split(size);
 
-                    f.render_widget(list, chunks[0]);
+                    f.render_widget(sidebar, chunks[0]);
+                    f.render_widget(main_content, chunks[1]);
+
+                    if app.password_prompt_active {
+                        let popup_layout = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Percentage(40),
+                                Constraint::Percentage(20),
+                                Constraint::Percentage(40),
+                            ].as_ref())
+                            .split(size);
+
+                        let area = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([
+                                Constraint::Percentage(30),
+                                Constraint::Percentage(40),
+                                Constraint::Percentage(30),
+                            ].as_ref())
+                            .split(popup_layout[1])[1];
+
+                        f.render_widget(ratatui::widgets::Clear, area);
+                        
+                        let title = if let Some(crate::app::PendingOperation::Lock(_)) = app.pending_operation {
+                            " Set Password "
+                        } else {
+                            " Enter Password "
+                        };
+
+                        let content = if let Some(err) = &app.error_message {
+                             format!("{}\n\nPress Esc to cancel.", err)
+                        } else {
+                             "*".repeat(app.password_buffer.len())
+                        };
+
+                        let popup = ratatui::widgets::Paragraph::new(content)
+                            .block(Block::default().borders(Borders::ALL).title(title).style(Style::default().fg(Color::Red)))
+                            .wrap(ratatui::widgets::Wrap { trim: true });
+                        f.render_widget(popup, area);
+                    }
                 })
-                .map_err(UIError::Tui)
+                .map(|_| ())
+                .map_err(|e| UIError::Tui(e.to_string()))
         }
 
         /// Handle a single user input event.
-        ///
-        /// The function reads one `crossterm::event::Event`.  It currently
-        /// ignores all events except the `q` key, which is treated as a request to
-        /// exit.  The function returns `Ok(())` for all inputs; callers can decide
-        /// what to do with the event if they wish.
-        ///
-        /// Errors from `crossterm::event::read` are wrapped in
-        /// `UIError::Crossterm`.
-        pub fn handle_input(&mut self, _app: &mut crate::app::App) -> Result<(), UIError> {
-            let event = read().map_err(UIError::Crossterm)?;
+        pub fn handle_input(&mut self, app: &mut crate::app::App) -> Result<(), UIError> {
+            if crossterm::event::poll(std::time::Duration::from_millis(10))? {
+                let event = read().map_err(UIError::Crossterm)?;
+                let sorted_ids = app.get_sorted_note_ids();
 
-            match event {
-                Event::Key(key_event) => match key_event.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        // In a real application we might set a flag to exit.
+                match event {
+                    Event::Key(key_event) => {
+                        if app.password_prompt_active {
+                             match key_event.code {
+                                 KeyCode::Esc => app.cancel_password(),
+                                 KeyCode::Enter => {
+                                     let _ = app.submit_password();
+                                 }
+                                 KeyCode::Backspace => {
+                                     app.password_buffer.pop();
+                                 }
+                                 KeyCode::Char(c) => {
+                                     app.password_buffer.push(c);
+                                 }
+                                 _ => {}
+                             }
+                             return Ok(());
+                        }
+
+                        if app.is_editing {
+                            if let Some(note_id) = sorted_ids.get(app.selected_index) {
+                                let note_id = note_id.clone();
+                                match key_event.code {
+                                    KeyCode::Esc => {
+                                        app.is_editing = false;
+                                        // Persist when exiting edit mode
+                                        if let Some(n) = app.notes.get(&note_id) {
+                                            let body = n.body.clone();
+                                            let _ = app.edit_note(&note_id, None, Some(&body));
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        if let Some(n) = app.notes.get_mut(&note_id) {
+                                            n.body.push(c);
+                                        }
+                                    }
+                                    KeyCode::Backspace => {
+                                        if let Some(n) = app.notes.get_mut(&note_id) {
+                                            n.body.pop();
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        if let Some(n) = app.notes.get_mut(&note_id) {
+                                            n.body.push('\n');
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                app.is_editing = false;
+                            }
+                        } else {
+                            match key_event.code {
+                                KeyCode::Char('q') | KeyCode::Esc => {
+                                    app.should_quit = true;
+                                }
+                                KeyCode::Char('n') => {
+                                    let _ = app.add_note("New Note", "");
+                                    app.selected_index = 0;
+                                }
+                                KeyCode::Char('d') => {
+                                    if let Some(note_id) = sorted_ids.get(app.selected_index) {
+                                        let _ = app.delete_note(note_id);
+                                        if app.selected_index > 0 {
+                                            app.selected_index -= 1;
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('l') => {
+                                     if let Some(note_id) = sorted_ids.get(app.selected_index) {
+                                         app.initiate_lock(note_id);
+                                     }
+                                }
+                                KeyCode::Up => {
+                                    if app.selected_index > 0 {
+                                        app.selected_index -= 1;
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if app.selected_index + 1 < sorted_ids.len() {
+                                        app.selected_index += 1;
+                                    }
+                                }
+                                KeyCode::Enter => {
+                                    if let Some(note_id) = sorted_ids.get(app.selected_index) {
+                                        if let Some(note) = app.notes.get(note_id) {
+                                            if note.encrypted && note.body.is_empty() {
+                                                app.initiate_unlock(note_id);
+                                            } else {
+                                                app.is_editing = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Event::Paste(content) => {
+                        if app.is_editing {
+                            if let Some(note_id) = sorted_ids.get(app.selected_index) {
+                                if let Some(n) = app.notes.get_mut(note_id) {
+                                    n.body.push_str(&content);
+                                }
+                            }
+                        }
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
 
             Ok(())
@@ -637,7 +1033,7 @@ pub mod main {
             .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
 
         // Load all notes into the application state
-        let mut app = App::new(&storage)
+        let mut app = App::new(storage)
             .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
 
         // Create the UI
@@ -646,20 +1042,32 @@ pub mod main {
 
         // Main event loop
         loop {
-            // Handle user input; break on error (e.g., exit command)
-            match ui.handle_input(&mut app) {
-                Ok(_) => {}
-                Err(e) => return Err(Box::<dyn Error>::from(e.to_string())),
-            }
-
             // Render the UI; propagate any rendering errors
             ui.render(&app)
                 .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+
+            // Handle user input; break on error (e.g., exit command)
+            match ui.handle_input(&mut app) {
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = ui.cleanup();
+                    return Err(Box::<dyn Error>::from(e.to_string()));
+                }
+            }
+
+            if app.should_quit {
+                break;
+            }
         }
+
+        ui.cleanup().map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
+        Ok(())
     }
 }
 
 fn main() {
-    println!("Starting application...");
-    todo!("Wire up application entry point")
+    if let Err(e) = crate::main::main() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
 }

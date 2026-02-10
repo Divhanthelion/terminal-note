@@ -1,5 +1,5 @@
 [package]
-name = "locknote"
+name = "terminal-note"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 aes-gcm = "0.10"
 argon2 = "0.5"
 base64 = "0.22"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 crossterm = "0.28"
 directories = "6.0"
 rand = "0.8"
