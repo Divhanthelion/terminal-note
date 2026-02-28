@@ -407,26 +407,36 @@ pub mod search {
         /// note IDs that contain the term in either title or body. Duplicate IDs
         /// for a given term are removed.
         pub fn new(notes: &[Note]) -> Self {
-            let mut index: HashMap<String, Vec<String>> = HashMap::new();
-
+            let mut engine = SearchEngine { index: HashMap::new() };
             for note in notes {
-                let id = note.id.clone();
-                // Tokenize title and body
-                for term in tokenize(&note.title) {
-                    let entry = index.entry(term).or_insert_with(Vec::new);
-                    if !entry.contains(&id) {
-                        entry.push(id.clone());
-                    }
-                }
-                for term in tokenize(&note.body) {
-                    let entry = index.entry(term).or_insert_with(Vec::new);
-                    if !entry.contains(&id) {
-                        entry.push(id.clone());
-                    }
+                engine.add_note(note);
+            }
+            engine
+        }
+
+        /// Adds a note to the search index.
+        pub fn add_note(&mut self, note: &Note) {
+            let id = note.id.clone();
+            let mut terms = tokenize(&note.title);
+            terms.extend(tokenize(&note.body));
+            for term in terms {
+                let entry = self.index.entry(term).or_default();
+                if !entry.contains(&id) {
+                    entry.push(id.clone());
                 }
             }
+        }
 
-            SearchEngine { index }
+        /// Removes a note from the search index.
+        pub fn remove_note(&mut self, note: &Note) {
+            let id = &note.id;
+            let mut terms = tokenize(&note.title);
+            terms.extend(tokenize(&note.body));
+            for term in terms {
+                if let Some(entry) = self.index.get_mut(&term) {
+                    entry.retain(|existing_id| existing_id != id);
+                }
+            }
         }
 
         /// Returns a vector of note IDs that contain the given term.
@@ -457,6 +467,7 @@ pub mod app {
     /// Holds the in‑memory state of the application.
     pub struct App {
         pub notes: HashMap<String, crate::note::Note>,
+        pub sorted_note_ids: Vec<String>,
         pub current_note_id: Option<String>,
         pub search_engine: crate::search::SearchEngine,
         pub storage: Storage,
@@ -505,8 +516,9 @@ pub mod app {
             let notes_map: HashMap<String, crate::note::Note> =
                 notes_vec.iter().cloned().map(|n| (n.id.clone(), n)).collect();
             let search_engine = crate::search::SearchEngine::new(&notes_vec);
-            Ok(App {
+            let mut app = App {
                 notes: notes_map,
+                sorted_note_ids: Vec::new(),
                 current_note_id: None,
                 search_engine,
                 storage,
@@ -517,7 +529,9 @@ pub mod app {
                 password_buffer: String::new(),
                 pending_operation: None,
                 error_message: None,
-            })
+            };
+            app.update_sorted_note_ids();
+            Ok(app)
         }
 
         /// Add a new note with the given title and body.
@@ -525,10 +539,11 @@ pub mod app {
             let note = crate::note::Note::new(title, body);
             // Persist the new note
             self.storage_save(&note)?;
+            // Update search index
+            self.search_engine.add_note(&note);
             // Insert into in‑memory map
             self.notes.insert(note.id.clone(), note);
-            // Rebuild search index
-            self.reindex();
+            self.update_sorted_note_ids();
             Ok(())
         }
 
@@ -543,6 +558,9 @@ pub mod app {
             // Clone the note to avoid borrowing issues
             let mut note = self.notes.get(id).cloned().ok_or(AppError::Search)?;
             
+            // Remove old note from search index
+            self.search_engine.remove_note(&note);
+
             if let Some(t) = title {
                 note.title = t.to_string();
             }
@@ -553,11 +571,13 @@ pub mod app {
 
             // Persist changes
             self.storage_save(&note)?;
-            // Rebuild search index
-            self.reindex();
+            
+            // Add updated note to search index
+            self.search_engine.add_note(&note);
             
             // Update the in-memory note after reindexing
             self.notes.insert(id.to_string(), note);
+            self.update_sorted_note_ids();
             Ok(())
         }
 
@@ -567,8 +587,9 @@ pub mod app {
             let removed = self.notes.remove(id).ok_or(AppError::Search)?;
             // Delete from storage
             self.storage_delete(&removed.id)?;
-            // Rebuild search index
-            self.reindex();
+            // Update search index
+            self.search_engine.remove_note(&removed);
+            self.update_sorted_note_ids();
             Ok(())
         }
 
@@ -589,13 +610,14 @@ pub mod app {
                 self.notes.insert(note.id.clone(), note);
             }
             self.reindex();
+            self.update_sorted_note_ids();
             Ok(())
         }
 
-        pub fn get_sorted_note_ids(&self) -> Vec<String> {
+        pub fn update_sorted_note_ids(&mut self) {
             let mut notes: Vec<_> = self.notes.values().collect::<Vec<_>>();
             notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            notes.iter().map(|n| n.id.clone()).collect()
+            self.sorted_note_ids = notes.into_iter().map(|n| n.id.clone()).collect();
         }
 
         pub fn initiate_unlock(&mut self, id: &str) {
@@ -634,7 +656,12 @@ pub mod app {
                      PendingOperation::Unlock(id) => {
                          match self.storage.unlock_note(&id, &self.password_buffer) {
                              Ok(note) => {
+                                 if let Some(old_note) = self.notes.get(&id) {
+                                     self.search_engine.remove_note(old_note);
+                                 }
+                                 self.search_engine.add_note(&note);
                                  self.notes.insert(id, note);
+                                 self.update_sorted_note_ids();
                                  self.password_prompt_active = false;
                                  self.password_buffer.clear();
                                  self.pending_operation = None;
@@ -658,7 +685,12 @@ pub mod app {
                                  Ok(_) => {
                                      // Reload to reflect encrypted state
                                      if let Ok(note) = self.storage.load_note(&id) {
+                                          if let Some(old_note) = self.notes.get(&id) {
+                                              self.search_engine.remove_note(old_note);
+                                          }
+                                          self.search_engine.add_note(&note);
                                           self.notes.insert(id, note);
+                                          self.update_sorted_note_ids();
                                      }
                                      self.password_prompt_active = false;
                                      self.password_buffer.clear();
@@ -716,10 +748,15 @@ pub mod ui {
         Terminal,
         widgets::{Block, Borders, List, ListItem},
     };
+    use syntect::parsing::SyntaxSet;
+    use syntect::highlighting::{ThemeSet, Theme};
+    use syntect::easy::HighlightLines;
 
     /// Encapsulates the terminal backend.
     pub struct UI {
         pub terminal: Terminal<CrosstermBackend<Stdout>>,
+        pub syntax_set: SyntaxSet,
+        pub theme: Theme,
     }
 
     /// Errors that can occur during rendering or input handling.
@@ -752,7 +789,13 @@ pub mod ui {
             execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
             let backend = CrosstermBackend::new(stdout);
             let terminal = Terminal::new(backend).map_err(|e| UIError::Tui(e.to_string()))?;
-            Ok(Self { terminal })
+            
+            let syntax_set = SyntaxSet::load_defaults_newlines();
+            let theme_set = ThemeSet::load_defaults();
+            // Let's use a nice dark theme by default
+            let theme = theme_set.themes["base16-ocean.dark"].clone();
+
+            Ok(Self { terminal, syntax_set, theme })
         }
 
         /// Cleanup the terminal state.
@@ -766,12 +809,11 @@ pub mod ui {
 
         /// Render the current state of `app` to the screen.
         pub fn render(&mut self, app: &crate::app::App) -> Result<(), UIError> {
-            let mut notes = app
-                .notes
-                .values()
-                .collect::<Vec<_>>();
-            
-            notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            let notes: Vec<_> = app
+                .sorted_note_ids
+                .iter()
+                .filter_map(|id| app.notes.get(id))
+                .collect();
 
             let sidebar_items = notes
                 .iter()
@@ -810,8 +852,18 @@ pub mod ui {
                         Style::default().fg(Color::Red).add_modifier(Modifier::ITALIC),
                     )));
                 } else {
-                    for line in note.body.lines() {
-                        text.push(ratatui::text::Line::from(line));
+                    let syntax = self.syntax_set.find_syntax_by_extension("md").unwrap();
+                    let mut h = HighlightLines::new(syntax, &self.theme);
+
+                    for line in syntect::util::LinesWithEndings::from(&note.body) {
+                        let ranges = h.highlight_line(line, &self.syntax_set).unwrap_or_default();
+                        let spans: Vec<ratatui::text::Span> = ranges.into_iter().map(|(style, s)| {
+                            ratatui::text::Span::styled(s.trim_end_matches(&['\r', '\n'][..]).to_string(), 
+                                Style::default().fg(Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b))
+                            )
+                        }).collect();
+                        
+                        text.push(ratatui::text::Line::from(spans));
                     }
                 }
                 
@@ -908,7 +960,7 @@ pub mod ui {
         pub fn handle_input(&mut self, app: &mut crate::app::App) -> Result<(), UIError> {
             if crossterm::event::poll(std::time::Duration::from_millis(10))? {
                 let event = read().map_err(UIError::Crossterm)?;
-                let sorted_ids = app.get_sorted_note_ids();
+                let sorted_ids = app.sorted_note_ids.clone();
 
                 match event {
                     Event::Key(key_event) => {
@@ -989,17 +1041,17 @@ pub mod ui {
                                          app.initiate_lock(note_id);
                                      }
                                 }
-                                KeyCode::Up => {
+                                KeyCode::Char('k') | KeyCode::Up => {
                                     if app.selected_index > 0 {
                                         app.selected_index -= 1;
                                     }
                                 }
-                                KeyCode::Down => {
+                                KeyCode::Char('j') | KeyCode::Down => {
                                     if app.selected_index + 1 < sorted_ids.len() {
                                         app.selected_index += 1;
                                     }
                                 }
-                                KeyCode::Enter => {
+                                KeyCode::Char('i') | KeyCode::Enter => {
                                     if let Some(note_id) = sorted_ids.get(app.selected_index) {
                                         if let Some(note) = app.notes.get(note_id) {
                                             if note.encrypted && note.body.is_empty() {
